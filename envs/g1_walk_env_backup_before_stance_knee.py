@@ -81,15 +81,6 @@ W_KNEE_BEND = 6.0  # smanjeno (bilo 15.0) - koleno je sekundarno, samo pomaze da
                    # hod izgleda prirodnije; podizanje stopala (W_FOOT_LIFT) je
                    # glavni prioritet, max doprinos kolena (6*0.6=3.6) < stopala (5.12)
 
-# kazna za savijeno koleno dok je noga u OSLONCU (nije podignuta) - koleno
-# treba da bude pravo dok stoji na podu, savijeno samo dok je u zamahu
-W_KNEE_STANCE_PENALTY = 3.0
-
-# nagrada za duzinu koraka - koliko podignuta noga stigne NAPRED u odnosu
-# na karlicu pre nego sto se spusti (ne samo da ide gore-dole u mestu)
-MAX_STRIDE = 0.22   # m, koliko daleko ispred karlice podignuto stopalo sme da ide
-W_STRIDE = 25.0
-
 # kazna ako OBE noge napuste pod istovremeno (skok) - hod treba da zadrzi
 # bar jedno stopalo u kontaktu sa podom u svakom trenutku
 W_AIRBORNE = 4.0
@@ -272,20 +263,6 @@ class G1WalkEnv(gym.Env):
             r += W_KNEE_BEND * knee_bend[0]
         if right_lift > LIFT_EPS and self._right_lift_steps <= max_lift_steps:
             r += W_KNEE_BEND * knee_bend[1]
-        # dok je noga u oslocu (na podu), koleno treba da bude pravo
-        if left_lift <= LIFT_EPS:
-            r -= W_KNEE_STANCE_PENALTY * abs(knee_qpos[0])
-        if right_lift <= LIFT_EPS:
-            r -= W_KNEE_STANCE_PENALTY * abs(knee_qpos[1])
-
-        # duzina koraka: dok je noga podignuta, nagradi koliko je stopalo
-        # ispred karlice (stvaran korak napred), ne samo da je u vazduhu
-        left_stride = self.data.xpos[self.left_foot_id, 0] - pelvis[0]
-        right_stride = self.data.xpos[self.right_foot_id, 0] - pelvis[0]
-        if left_lift > LIFT_EPS and self._left_lift_steps <= max_lift_steps:
-            r += W_STRIDE * np.clip(left_stride, 0.0, MAX_STRIDE)
-        if right_lift > LIFT_EPS and self._right_lift_steps <= max_lift_steps:
-            r += W_STRIDE * np.clip(right_stride, 0.0, MAX_STRIDE)
 
         left_dev = self.data.qpos[self.leg_qpos_adr[LEFT_IDX]] - self.nominal_qpos[self.leg_qpos_adr[LEFT_IDX]]
         right_dev = self.data.qpos[self.leg_qpos_adr[RIGHT_IDX]] - self.nominal_qpos[self.leg_qpos_adr[RIGHT_IDX]]

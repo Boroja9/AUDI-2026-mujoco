@@ -3,6 +3,7 @@
 **/.DS_Store
 __pycache__/
 *.py[cod]
+*:Zone.Identifier
 
 # Local Python environments and downloaded third-party robot assets.
 external/
@@ -12,10 +13,10 @@ external/
 # Generated simulation, training, and documentation output.
 logs/
 site/
-policies/
 checkpoints/
 runs/
-*.zip
+model2_dartboard_complete.zip
+g1_dartboard_robot_export.zip
 
 # Legacy three-link throwing exercise; not part of the G1 ball-drop task.
 assets/three_link_throw.xml
