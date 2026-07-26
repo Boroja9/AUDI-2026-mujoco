@@ -18,12 +18,11 @@ THROW_POSE_RAD = np.array([-2.0, -0.80, 0.0, 1.5, 0.0, 0.0, 0.0])
 RAISE_END = 0.45
 COCK_END = 1.00
 WHIP_END = 1.20
-RECOVER_END = 1.60
 MIN_RELEASE_TIME = 0.4   # RL ne sme da ispusti loptu pre ovog trenutka
 RELEASE_DEADLINE = 1.20  # prinudni release ako RL nikad ne odluci
 BASELINE_SCALE = 3.2
 
-TARGET_POS = (2.3, 0.0, 0.6)   # "pikado" meta - centar u koji treba pogoditi (visina lete lopte)
+TARGET_POS = (2.8, 0.0, 0.6)   # pomereno 0.5m dalje da kompenzuje hodanje pre bacanja
 SUCCESS_RADIUS = 0.28          # "bullseye" - unutar ovog radijusa = pogodak
 W_MISS_PENALTY = 3.0           # linearna kazna srazmerna udaljenosti - jasan signal "prisi blize" i kad je promasaj veliki
 W_ACCURACY = 15.0              # dodatni bonus koji brzo raste sto si blizi centru (fina preciznost)
@@ -118,11 +117,8 @@ class G1FreeThrowEnv(G1FixedBodyThrowEnv):
         if t < WHIP_END:
             p = _smoothstep((t - COCK_END) / (WHIP_END - COCK_END))
             return self._A_cock + (self._A_throw - self._A_cock) * p
-        if t < RECOVER_END:
-            # posle bacanja: ruka koci i vraca se u neutralan (pocetni) polozaj
-            p = _smoothstep((t - WHIP_END) / (RECOVER_END - WHIP_END))
-            return self._A_throw * (1.0 - p)
-        return np.zeros_like(self._A_throw)
+        # posle bacanja: ruka ostaje zamrznuta u poziciji bacanja
+        return self._A_throw
 
     def _base_obs_extra(self):
         pelvis_z = self.data.xpos[self.base_body_id, 2]
@@ -164,10 +160,14 @@ class G1FreeThrowEnv(G1FixedBodyThrowEnv):
         arm_residual = self._filtered_action[: len(self.active_joints)]
         waist_residual = self._filtered_action[len(self.active_joints)]
         full = self._baseline_action(t).copy()
-        full[self.active_joints] = np.clip(
-            full[self.active_joints] + RESIDUAL_SCALE * arm_residual,
-            -1, 1,
-        )
+        if t < WHIP_END:
+            full[self.active_joints] = np.clip(
+                full[self.active_joints] + RESIDUAL_SCALE * arm_residual,
+                -1, 1,
+            )
+        # posle WHIP_END (RECOVER i dalje): bez RL korekcije, samo baseline -
+        # sprecava da ruka nekontrolisano zamahne levo-desno (kroz glavu) na
+        # povratku u neutralan polozaj.
         if COCK_END <= t < WHIP_END:
             # recet: samo napred (ka throw), nikad nazad (ka cock).
             # startuje od STVARNE pozicije ruke pri ulasku u whip, ne od

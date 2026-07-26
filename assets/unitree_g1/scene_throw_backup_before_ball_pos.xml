@@ -18,7 +18,7 @@
   <worldbody>
     <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
   
-    <body name="throw_ball" pos="1.31 -0.15 0.89">
+    <body name="throw_ball" pos="0.31 -0.15 0.89">
       <freejoint name="throw_ball_free"/>
       <geom name="throw_ball_geom" type="sphere" size="0.04" mass="0.05" rgba="0.9 0.2 0.1 1"/>
     </body>
@@ -42,7 +42,7 @@
     <weld name="hold_throw_ball"
           body1="right_wrist_yaw_link"
           body2="throw_ball"
-          relpose="0.1 0.045 0 1 0 0 0"
+          relpose="0.16 0 0 1 0 0 0"
           active="true"
           solref="0.002 1"
           solimp="0.95 0.99 0.001"/>

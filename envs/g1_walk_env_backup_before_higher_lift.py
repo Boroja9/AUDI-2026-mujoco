@@ -61,19 +61,12 @@ FALL_PENALTY = 30.0   # povecano - jaca kazna za pad robota
 # ravno na podu (izmereno). Ograniceno na MAX_FOOT_LIFT da ne "farmi"
 # nagradu pretreanim/neprirodnim mahsiranjem (marširanje previsoko).
 FOOT_REST_Z = 0.033
-MAX_FOOT_LIFT = 0.16  # povecano (bilo 0.10) - noga sme/treba da ide vise, prirodniji korak
-W_FOOT_LIFT = 6.0     # blago povecano da prati vecu dozvoljenu visinu
+MAX_FOOT_LIFT = 0.10
+W_FOOT_LIFT = 5.0  # povecano - vise nagrade za podizanje stopala
 # nagrada za podignutu nogu vazi samo dok je podignuta unutar prirodnog
 # trajanja zamaha (swing faze) - ne beskonacno, da ne "visi" u vazduhu
 # radi farmljenja nagrade nego da stvarno koracka.
 MAX_LIFT_DURATION = 0.4  # sekunde
-
-# direktna nagrada za savijanje kolena (ne samo visinu stopala) - podstice
-# da se koleno stvarno savija tokom koraka, ne da noga ide gore uglavnom
-# iz kuka.
-KNEE_IDX = [3, 9]  # L_knee, R_knee u LEG_JOINTS
-MAX_KNEE_BEND = 0.6  # rad
-W_KNEE_BEND = 4.0
 
 # kazna ako OBE noge napuste pod istovremeno (skok) - hod treba da zadrzi
 # bar jedno stopalo u kontaktu sa podom u svakom trenutku
@@ -248,15 +241,6 @@ class G1WalkEnv(gym.Env):
             r += W_FOOT_LIFT * left_lift
         if self._right_lift_steps <= max_lift_steps:
             r += W_FOOT_LIFT * right_lift
-
-        # direktna nagrada za savijanje kolena (uz istu vremensku granicu kao
-        # i podizanje stopala - ne nagradjuje predugo drzanje savijenog kolena)
-        knee_qpos = self.data.qpos[self.leg_qpos_adr[KNEE_IDX]] - self.nominal_qpos[self.leg_qpos_adr[KNEE_IDX]]
-        knee_bend = np.clip(knee_qpos, 0.0, MAX_KNEE_BEND)
-        if self._left_lift_steps <= max_lift_steps:
-            r += W_KNEE_BEND * knee_bend[0]
-        if self._right_lift_steps <= max_lift_steps:
-            r += W_KNEE_BEND * knee_bend[1]
 
         left_dev = self.data.qpos[self.leg_qpos_adr[LEFT_IDX]] - self.nominal_qpos[self.leg_qpos_adr[LEFT_IDX]]
         right_dev = self.data.qpos[self.leg_qpos_adr[RIGHT_IDX]] - self.nominal_qpos[self.leg_qpos_adr[RIGHT_IDX]]
