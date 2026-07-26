@@ -4,6 +4,30 @@ Three trained tasks, each documented with the same metric set: episode reward, e
 
 ---
 
+## Setup (fresh clone)
+
+Requires Python 3.12. No separate MuJoCo/Unitree asset download needed — the G1 model, meshes, and every trained policy checkpoint already live in this repo.
+
+```bash
+git clone https://github.com/Boroja9/AUDI-2026-mujoco.git
+cd AUDI-2026-mujoco
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+On Windows PowerShell, replace the venv-creation/activation lines with:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+Verified against a clean clone on 2026-07-26: `mujoco 3.10.0`, `gymnasium 1.3.0`, `stable-baselines3 2.9.0`, `torch 2.13.0` — all three tasks below ran headless immediately after `pip install`, reproducing the documented metrics exactly (Task 3, seed 247: 0.062m landing error).
+
+---
+
 ## 1. Throw as far as possible (no target)
 
 **What it is:** the robot throws a ball with maximum forward distance, in a straight line, without falling. No target — pure distance + stability.
