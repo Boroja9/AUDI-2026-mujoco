@@ -17,6 +17,7 @@ class G1FixedBodyThrowEnv(gym.Env):
         self.episode_time=float(episode_time); self.control_dt=float(control_dt); self.frame_skip=max(1,int(round(self.control_dt/self.model.opt.timestep)))
         self.action_scale=float(action_scale); self.joint_safety_margin=float(joint_safety_margin); self.lock_right_hand=bool(lock_right_hand); self.learned_release=bool(learned_release); self.scripted_release_time=float(scripted_release_time); self.target_pos=np.array(target_pos,dtype=np.float64); self.success_radius=float(success_radius)
         self.ball_body_id=mujoco.mj_name2id(self.model,mujoco.mjtObj.mjOBJ_BODY,'throw_ball'); self.ball_geom_id=mujoco.mj_name2id(self.model,mujoco.mjtObj.mjOBJ_GEOM,'throw_ball_geom'); self.target_body_id=mujoco.mj_name2id(self.model,mujoco.mjtObj.mjOBJ_BODY,'throw_target'); self.hold_eq_id=mujoco.mj_name2id(self.model,mujoco.mjtObj.mjOBJ_EQUALITY,'hold_throw_ball'); self.ball_joint_id=mujoco.mj_name2id(self.model,mujoco.mjtObj.mjOBJ_JOINT,'throw_ball_free')
+        self.target_geom_id=mujoco.mj_name2id(self.model,mujoco.mjtObj.mjOBJ_GEOM,'throw_target_geom'); self.stick_eq_id=mujoco.mj_name2id(self.model,mujoco.mjtObj.mjOBJ_EQUALITY,'stick_to_target')
         missing=[]
         if self.ball_body_id<0: missing.append('throw_ball')
         if self.target_body_id<0: missing.append('throw_target')
@@ -38,13 +39,14 @@ class G1FixedBodyThrowEnv(gym.Env):
         self.arm_joint_lower=self.model.jnt_range[self.arm_joint_ids,0]+self.joint_safety_margin
         self.arm_joint_upper=self.model.jnt_range[self.arm_joint_ids,1]-self.joint_safety_margin
         self.arm_actuator_ids=self._find_arm_actuator_ids(); self.n_arm=len(self.arm_joint_names)
+        self.extra_actuator_ids=np.array([],dtype=np.int32); self.extra_joint_lower=np.array([]); self.extra_joint_upper=np.array([])
         self.action_space=spaces.Box(-1,1,shape=(self.n_arm+1,),dtype=np.float32)
         obs_dim=self.n_arm+self.n_arm+3+3+3+(self.n_arm+1)+1+1; self.observation_space=spaces.Box(-np.inf,np.inf,shape=(obs_dim,),dtype=np.float32)
         self.prev_action=np.zeros(self.n_arm+1); self.nominal_qpos=np.zeros(self.model.nq); self.nominal_ctrl=np.zeros(self.model.nu); self.locked_hand_qpos=None; self._init_nominal_pose()
         self.base_body_id=mujoco.mj_name2id(self.model,mujoco.mjtObj.mjOBJ_BODY,'pelvis')
         self.nominal_base_height=float(self.data.xpos[self.base_body_id,2]) if self.base_body_id >= 0 else 0.0
         self.fall_height=0.55*self.nominal_base_height
-        self.ball_radius=float(self.model.geom_size[self.ball_geom_id,0]); self.step_count=0; self.released=False; self.release_time=None; self.best_dist=np.inf; self.landing_error=None; self.success=False; self.robot_fell=False
+        self.ball_radius=float(self.model.geom_size[self.ball_geom_id,0]); self.step_count=0; self.released=False; self.release_time=None; self.best_dist=np.inf; self.landing_error=None; self.success=False; self.robot_fell=False; self.stuck=False
     def _find_right_arm_joint_names(self):
         all_names=[mujoco.mj_id2name(self.model,mujoco.mjtObj.mjOBJ_JOINT,i) for i in range(self.model.njnt)]; all_names=[n for n in all_names if n]
         preferred=['right_shoulder_pitch_joint','right_shoulder_roll_joint','right_shoulder_yaw_joint','right_elbow_joint','right_wrist_roll_joint','right_wrist_pitch_joint','right_wrist_yaw_joint']
@@ -113,13 +115,19 @@ class G1FixedBodyThrowEnv(gym.Env):
         else: mujoco.mj_resetData(self.model,self.data); self.data.qpos[:]=self.nominal_qpos
         self.data.ctrl[:]=self.nominal_ctrl; self.data.qpos[self.arm_qpos_adr]+=self.np_random.uniform(-0.03,0.03,self.n_arm); self._lock_hand()
         if self.hold_eq_id>=0: self.data.eq_active[self.hold_eq_id]=1
+        if self.stick_eq_id>=0: self.data.eq_active[self.stick_eq_id]=0
+        self.model.geom_contype[self.ball_geom_id]=1; self.model.geom_conaffinity[self.ball_geom_id]=1
         mujoco.mj_forward(self.model,self.data); self._place_ball_in_hand(); self.model.body_pos[self.target_body_id]=self.target_pos; mujoco.mj_forward(self.model,self.data)
-        self.step_count=0; self.released=False; self.release_time=None; self.best_dist=np.inf; self.landing_error=None; self.success=False; self.robot_fell=False; self.prev_action=np.zeros(self.n_arm+1)
+        self.step_count=0; self.released=False; self.release_time=None; self.best_dist=np.inf; self.landing_error=None; self.success=False; self.robot_fell=False; self.stuck=False; self.prev_action=np.zeros(self.n_arm+len(self.extra_actuator_ids)+1)
         return self._get_obs(), {}
     def step(self, action):
         action=np.clip(np.asarray(action,dtype=np.float64),-1,1); self.data.ctrl[:]=self.nominal_ctrl
         arm_targets=self.nominal_ctrl[self.arm_actuator_ids]+self.action_scale*action[:self.n_arm]
         self.data.ctrl[self.arm_actuator_ids]=np.clip(arm_targets,self.arm_joint_lower,self.arm_joint_upper)
+        n_extra=len(self.extra_actuator_ids)
+        if n_extra:
+            extra_targets=self.nominal_ctrl[self.extra_actuator_ids]+self.action_scale*action[self.n_arm:self.n_arm+n_extra]
+            self.data.ctrl[self.extra_actuator_ids]=np.clip(extra_targets,self.extra_joint_lower,self.extra_joint_upper)
         t=self.step_count*self.control_dt
         if not self.released:
             do_release=action[-1]>0.5 if self.learned_release else t>=self.scripted_release_time
@@ -129,23 +137,40 @@ class G1FixedBodyThrowEnv(gym.Env):
         for _ in range(self.frame_skip):
             mujoco.mj_step(self.model,self.data)
             self._lock_hand()
-        self.step_count+=1; ball_pos=self._ball_pos(); xy_error=float(np.linalg.norm(ball_pos[:2]-self.target_pos[:2])); self.best_dist=min(self.best_dist,xy_error)
-        landed=bool(self.released and ball_pos[2] <= self.ball_radius+0.015)
+        self.step_count+=1; ball_pos=self._ball_pos(); dist_3d=float(np.linalg.norm(ball_pos-self.target_pos)); self.best_dist=min(self.best_dist,dist_3d)
+        hit_target=False
+        if self.released and not self.stuck and self.target_geom_id>=0:
+            for i in range(self.data.ncon):
+                c=self.data.contact[i]; g1,g2=int(c.geom1),int(c.geom2)
+                if self.ball_geom_id in (g1,g2) and self.target_geom_id in (g1,g2):
+                    hit_target=True; break
+        if hit_target and self.stick_eq_id>=0:
+            tpos=self.data.xpos[self.target_body_id]; tmat=self.data.xmat[self.target_body_id].reshape(3,3)
+            relpos=tmat.T@(ball_pos-tpos); relquat=np.empty(4,dtype=np.float64)
+            tquat_inv=np.empty(4,dtype=np.float64); mujoco.mju_negQuat(tquat_inv,self.data.xquat[self.target_body_id])
+            mujoco.mju_mulQuat(relquat,tquat_inv,self.data.xquat[self.ball_body_id])
+            self.model.eq_data[self.stick_eq_id,3:6]=relpos; self.model.eq_data[self.stick_eq_id,6:10]=relquat
+            self.data.eq_active[self.stick_eq_id]=1
+            self.data.qvel[self.ball_qvel_adr:self.ball_qvel_adr+6]=0
+            self.model.geom_contype[self.ball_geom_id]=0; self.model.geom_conaffinity[self.ball_geom_id]=0
+            self.stuck=True
+        landed_on_ground=bool(self.released and ball_pos[2] <= self.ball_radius+0.015)
+        landed=bool(hit_target or landed_on_ground)
         if landed and self.landing_error is None:
-            self.landing_error=xy_error; self.success=bool(xy_error <= self.success_radius)
+            self.landing_error=dist_3d; self.success=bool(dist_3d <= self.success_radius)
         self.robot_fell=bool(self.base_body_id >= 0 and self.data.xpos[self.base_body_id,2] < self.fall_height)
         obs=self._get_obs(); reward=self._compute_reward(action, landed); terminated=bool(landed or self.robot_fell); truncated=bool(self.step_count*self.control_dt>=self.episode_time)
-        info={'dist_to_target':xy_error,'best_dist':float(self.best_dist),'landing_error':self.landing_error,'success':self.success,'released':self.released,'release_time':self.release_time,'completion_time':self.step_count*self.control_dt if landed else None,'robot_fell':self.robot_fell,'arm_joint_names':self.arm_joint_names}
+        info={'dist_to_target':dist_3d,'best_dist':float(self.best_dist),'landing_error':self.landing_error,'success':self.success,'released':self.released,'release_time':self.release_time,'completion_time':self.step_count*self.control_dt if landed else None,'robot_fell':self.robot_fell,'arm_joint_names':self.arm_joint_names}
         self.prev_action=action.copy(); return obs,float(reward),terminated,truncated,info
     def _compute_reward(self, action, landed):
-        xy_error=np.linalg.norm(self._ball_pos()[:2]-self.target_pos[:2])
+        dist_3d=np.linalg.norm(self._ball_pos()-self.target_pos)
         reward=-0.002*np.linalg.norm(action[:self.n_arm])-0.002*np.linalg.norm(action-self.prev_action)
         if self.robot_fell:
             return reward-5.0
         if landed:
-            return reward + (10.0 if self.success else np.exp(-6.0*xy_error))
+            return reward + (10.0 if self.success else np.exp(-6.0*dist_3d))
         if self.released:
-            reward += 0.05*np.exp(-4.0*xy_error)
+            reward += 0.05*np.exp(-4.0*dist_3d)
         return reward
     def _get_obs(self):
         return np.concatenate([self.data.qpos[self.arm_qpos_adr], self.data.qvel[self.arm_qvel_adr], self._ball_pos(), self._ball_vel(), self.target_pos, self.prev_action, [1.0 if self.released else 0.0], [max(0.0,self.episode_time-self.step_count*self.control_dt)]]).astype(np.float32)

@@ -1,0 +1,15 @@
+
+<mujoco model="g1_throw_baseline">
+  <include file="g1_29dof.xml"/>
+  <option timestep="0.002" integrator="implicitfast"/>
+  <worldbody>
+    <body name="ball" pos="0.3 -0.2 1.0">
+      <freejoint name="ball_free"/>
+      <geom name="ball_geom" type="sphere" size="0.02" mass="0.05"
+            rgba="0.78 0.06 0.18 1" friction="0.8 0.01 0.001"
+            solref="0.005 1" condim="4"/>
+    </body>
+    <site name="target_zone" type="box" pos="0.7 0.0 0.001"
+          size="0.15 0.15 0.001" rgba="0.78 0.06 0.18 0.35"/>
+  </worldbody>
+</mujoco>
