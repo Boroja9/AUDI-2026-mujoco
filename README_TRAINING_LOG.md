@@ -2,7 +2,7 @@
 
 This document covers the full training session for the Unitree G1 humanoid robot: free throwing, dartboard-accuracy throwing, and walking. It records every iteration, the bugs found along the way, the fixes applied, and final metrics for each task.
 
-All environments live in `envs/`, training scripts in `scripts/`, trained models in `policies/`.
+All environments live in `envs/`, training scripts in `scripts/`, trained models in `policies/`. Only the current/best checkpoint for each task lives at the top level of `policies/` — every superseded iteration named below (e.g. `g1_free_throw_ppo_no_recovery`, `g1_free_throw_ppo_jittery`, `g1_walk_ppo_v2_higherlift`) has been moved to `policies/archive/<name>/` to keep the top level readable; the folder names themselves are unchanged. Old env-file snapshots from before each risky edit likewise live under `envs/backups/`.
 
 ---
 

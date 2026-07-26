@@ -137,7 +137,11 @@ class G1FixedBodyThrowEnv(gym.Env):
         for _ in range(self.frame_skip):
             mujoco.mj_step(self.model,self.data)
             self._lock_hand()
-        self.step_count+=1; ball_pos=self._ball_pos(); dist_3d=float(np.linalg.norm(ball_pos-self.target_pos)); self.best_dist=min(self.best_dist,dist_3d)
+        self.step_count+=1; ball_pos=self._ball_pos()
+        # Poeni/pogodak se racunaju SAMO po X (dubina - koliko daleko je lopta
+        # doletela u odnosu na metu), ne po Y (bocno) - Y namerno ne ulazi u
+        # ovo rastojanje, robot za njega ne dobija niti gubi poene direktno.
+        dist_3d=float(abs(ball_pos[0]-self.target_pos[0])); self.best_dist=min(self.best_dist,dist_3d)
         hit_target=False
         if self.released and not self.stuck and self.target_geom_id>=0:
             for i in range(self.data.ncon):

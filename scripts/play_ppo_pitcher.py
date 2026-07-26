@@ -17,7 +17,7 @@ from envs.g1_free_throw_env import G1FreeThrowEnv
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", type=Path,
-                    default=ROOT / "policies" / "g1_free_throw_ppo" / "best_model.zip")
+                    default=ROOT / "policies" / "g1_free_throw_ppo_distance_only" / "best_model.zip")
     ap.add_argument("--speed", type=float, default=1.0)
     ap.add_argument("--seed", type=int, default=29)
     args = ap.parse_args()

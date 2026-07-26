@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Gledaj istreniranu PPO politiku za hodanje (dva koraka).
 
-    python scripts/play_ppo_walk.py --model policies/g1_walk_ppo/best_model.zip
+    python scripts/play_ppo_walk.py --model policies/g1_walk_ppo_v2/best_model_frozen_test.zip
 """
 from pathlib import Path
 import argparse, sys, time
@@ -17,7 +17,7 @@ from envs.g1_walk_env import G1WalkEnv
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", type=Path,
-                    default=ROOT / "policies" / "g1_walk_ppo" / "best_model.zip")
+                    default=ROOT / "policies" / "g1_walk_ppo_v2" / "best_model_frozen_test.zip")
     ap.add_argument("--speed", type=float, default=1.0)
     args = ap.parse_args()
 

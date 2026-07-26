@@ -17,11 +17,3 @@ checkpoints/
 runs/
 model2_dartboard_complete.zip
 g1_dartboard_robot_export.zip
-
-# Legacy three-link throwing exercise; not part of the G1 ball-drop task.
-assets/three_link_throw.xml
-envs/three_link_throw_env.py
-scripts/evaluate_throw.py
-scripts/play_throw.py
-scripts/random_policy_viewer.py
-scripts/train_throw.py
