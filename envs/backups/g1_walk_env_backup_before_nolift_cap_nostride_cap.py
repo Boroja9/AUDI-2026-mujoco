@@ -34,10 +34,10 @@ FALL_HEIGHT_RATIO = 0.55
 HIP_LATERAL_IDX = [1, 2, 7, 8]  # L_hip_roll, L_hip_yaw, R_hip_roll, R_hip_yaw
 W_HIP_LATERAL = 0.5
 
-# levi/desni parovi (isti zglob, suprotna noga) - kazna za asimetriju uklonjena
+# levi/desni parovi (isti zglob, suprotna noga) - za kaznu asimetrije (smanjeno)
 LEFT_IDX = [0, 1, 2, 3, 4, 5]
 RIGHT_IDX = [6, 7, 8, 9, 10, 11]
-W_ASYMMETRY = 0.0
+W_ASYMMETRY = 0.1
 
 # "stabilan na kraju": mora da ostane u ciljnoj zoni SETTLE_STEPS koraka
 # (nizak nagib/brzina), ne samo da je trenutno prosao 0.5m usred pada
@@ -61,7 +61,7 @@ FALL_PENALTY = 30.0   # povecano - jaca kazna za pad robota
 # ravno na podu (izmereno). Ograniceno na MAX_FOOT_LIFT da ne "farmi"
 # nagradu pretreanim/neprirodnim mahsiranjem (marširanje previsoko).
 FOOT_REST_Z = 0.033
-MAX_FOOT_LIFT = np.inf  # uklonjen plafon - podizanje stopala se vise ne ogranicava
+MAX_FOOT_LIFT = 0.16  # povecano (bilo 0.10) - noga sme/treba da ide vise, prirodniji korak
 W_FOOT_LIFT = 32.0    # povecano (bilo 18.0) - podizanje stopala vaznije od savijanja kolena,
                       # max doprinos (32*0.16=5.12) sada preteze nad kolenom (ispod)
                       # (vuci noge) je vec davala solidnu nagradu pa se mrezi
@@ -88,7 +88,7 @@ W_KNEE_STANCE_PENALTY = 3.0
 
 # nagrada za duzinu koraka - koliko podignuta noga stigne NAPRED u odnosu
 # na karlicu pre nego sto se spusti (ne samo da ide gore-dole u mestu)
-MAX_STRIDE = 0.25   # m, koliko daleko ispred karlice podignuto stopalo sme da ide
+MAX_STRIDE = 0.22   # m, koliko daleko ispred karlice podignuto stopalo sme da ide
 W_STRIDE = 25.0
 
 # kazna ako OBE noge napuste pod istovremeno (skok) - hod treba da zadrzi
@@ -102,12 +102,6 @@ W_STAND_STILL = 2.0
 
 # kazna ako krene unazad (fwd < 0) - smanjeno, ne treba da bude prestrogo
 W_BACKWARD = 2.0
-
-# minimizuj VREME dolaska do cilja: mala kazna svaki korak dok jos nije
-# stigao (podstice zurbu), plus jednokratan bonus koji je veci sto brze stigne
-W_TIME_PENALTY = 0.2
-W_ARRIVAL_SPEED = 15.0
-ARRIVAL_SPEED_WINDOW = 1.5  # s - stigne li unutar ovoga, pun bonus, posle linearno opada do 0
 
 FILTER_ALPHA = 0.3  # nisko-propusni filter na akciju, isti trik kao kod bacanja
 
@@ -173,7 +167,6 @@ class G1WalkEnv(gym.Env):
         self._prev_capped_fwd = 0.0
         self._left_lift_steps = 0
         self._right_lift_steps = 0
-        self._arrived_step = None
 
     def _gravity_in_base(self):
         R = self.data.xmat[self.torso_id].reshape(3, 3)
@@ -212,7 +205,6 @@ class G1WalkEnv(gym.Env):
         self._prev_capped_fwd = 0.0
         self._left_lift_steps = 0
         self._right_lift_steps = 0
-        self._arrived_step = None
         return self._get_obs(), {}
 
     def step(self, action):
@@ -323,17 +315,6 @@ class G1WalkEnv(gym.Env):
 
         speed = float(np.linalg.norm(vel[:3]))
         in_zone = fwd >= TARGET_DISTANCE and not fell
-
-        # minimizuj VREME dolaska: mala kazna svaki korak dok jos nije stigao,
-        # plus jednokratan bonus koji je veci sto brze stigne (manje vremena
-        # od pocetka epizode)
-        if not in_zone:
-            r -= W_TIME_PENALTY
-        elif self._arrived_step is None:
-            self._arrived_step = self.step_count
-            arrival_t = self._arrived_step * self.control_dt
-            r += W_ARRIVAL_SPEED * max(0.0, 1.0 - arrival_t / ARRIVAL_SPEED_WINDOW)
-
         # kontinualan podsticaj da miruje cim je u ciljnoj zoni (ne samo
         # jednokratan bonus na kraju)
         if in_zone:

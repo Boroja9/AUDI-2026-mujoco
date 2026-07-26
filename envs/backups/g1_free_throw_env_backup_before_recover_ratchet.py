@@ -18,12 +18,11 @@ THROW_POSE_RAD = np.array([-2.0, -0.80, 0.0, 1.5, 0.0, 0.0, 0.0])
 RAISE_END = 0.45
 COCK_END = 1.00
 WHIP_END = 1.20
-RECOVER_DURATION = 0.0875  # s - jos duplo brze (bilo 0.175, pre toga 0.35) - koliko traje GLATKI skriptovani prelaz iz STVARNE
-                          # (ne idealizovane) pozicije ruke u trenutku kraja
-                          # bacanja, ka neutralnoj (0,0,0). RL vise NE ucestvuje
-                          # u ovoj fazi - garantovano bez mrdanja/trzaja/pogresnog
-                          # smera, jer je to cista matematika (smoothstep), ne
-                          # nesto sto mreza "izlaze".
+RECOVER_SMOOTH_END = 1.45  # kratak POSTEPEN prelaz skriptovanog dela (svih
+                           # zglobova) iz poze bacanja u neutralnu - bez ovoga
+                           # shoulder_roll (koji RL ne dira u recovery fazi)
+                           # naglo "puca" ka novoj meti i moze prevrnuti ruku
+                           # na pogresnu stranu usled inercije
 MIN_RELEASE_TIME = 0.4   # RL ne sme da ispusti loptu pre ovog trenutka
 RELEASE_DEADLINE = 1.20  # prinudni release ako RL nikad ne odluci
 BASELINE_SCALE = 3.2
@@ -48,6 +47,15 @@ W_RESIDUAL = 0
 ALIVE_BONUS = 0.05
 FALL_PENALTY = 20.0
 
+# --- naucen (ne skriptovan) povratak u neutralnu pozu posle bacanja ---
+# RL posle WHIP_END zadrzava kontrolu SAMO nad shoulder_pitch i elbow (indeksi
+# 0 i 3 u nizu od 7 ruku-zglobova) - shoulder_roll ide direktno na skriptovanu
+# (neutralnu) vrednost, RL ga vise ne dira u ovoj fazi.
+RECOVER_JOINT_IDX = np.array([0, 3])
+RECOVER_RESIDUAL_SCALE = 1.0  # veci opseg nego RESIDUAL_SCALE - treba brze da se vrati
+W_RECOVER_PROGRESS = 4.0   # nagrada za smanjenje rastojanja do neutralne poze iz koraka u korak
+RECOVER_SETTLE_EPS = 0.05  # rad - kad je unutar ovoga, racuna se "stigao"
+W_RECOVER_JITTER = 0.3     # kazna za brzinu zgloba nakon sto je vec stigao (da ne drma)
 # KLJUCNO: epizoda se inace gasi ISTOG koraka kad lopta sleti/pogodi metu -
 # to je bilo pre WHIP_END kod uspesnih bacanja (target je blizu), pa recovery
 # kod NIKAD nije stigao da se izvrsi. Sad se epizoda drzi ziva jos ovoliko
@@ -123,7 +131,17 @@ class G1FreeThrowEnv(G1FixedBodyThrowEnv):
         )
         self._released_here = False
         self._filtered_action = np.zeros(len(self.active_joints) + 1, dtype=np.float32)
+        # qpos/qvel adrese za shoulder_pitch i elbow - za "brz povratak bez
+        # drmanja" nagradu u recovery fazi
+        self._recover_qpos_adr = self.arm_qpos_adr[RECOVER_JOINT_IDX]
+        self._recover_qvel_adr = self.arm_qvel_adr[RECOVER_JOINT_IDX]
         self._recover_hold_steps = int(round(RECOVER_HOLD_SECONDS / self.control_dt))
+        # maska nad 3-elementnim residual vektorom (poredak = self.active_joints):
+        # pitch(pozicija 0)=1, roll(pozicija 1)=0, elbow(pozicija 2)=1
+        self._recover_mask = np.array(
+            [1.0 if j in RECOVER_JOINT_IDX else 0.0 for j in ACTIVE_JOINTS],
+            dtype=np.float32,
+        )
 
     def _baseline_action(self, t):
         if t < RAISE_END:
@@ -134,10 +152,13 @@ class G1FreeThrowEnv(G1FixedBodyThrowEnv):
         if t < WHIP_END:
             p = _smoothstep((t - COCK_END) / (WHIP_END - COCK_END))
             return self._A_cock + (self._A_throw - self._A_cock) * p
-        # posle WHIP_END: recovery prelaz se racuna u step() na osnovu STVARNE
-        # pozicije u tom trenutku (ne odavde) - ovo se koristi samo za
-        # zglobove van active_joints (npr. rucni zglobovi), koji ionako
-        # ostaju na neutrali.
+        if t < RECOVER_SMOOTH_END:
+            # kratak, postepen prelaz skriptovanog dela iz poze bacanja u
+            # neutralnu - sprecava nagli "skok" komande (posebno za
+            # shoulder_roll, koji RL ne dira u ovoj fazi). RL (pitch+elbow)
+            # i dalje moze da ubrza povratak preko ovoga (videti step()).
+            p = _smoothstep((t - WHIP_END) / (RECOVER_SMOOTH_END - WHIP_END))
+            return self._A_throw + (self._A_neutral - self._A_throw) * p
         return self._A_neutral
 
     def _base_obs_extra(self):
@@ -169,8 +190,7 @@ class G1FreeThrowEnv(G1FixedBodyThrowEnv):
         self._released_here = False
         self._filtered_action = np.zeros(len(self.active_joints) + 1, dtype=np.float32)
         self._whip_high_water = None  # postavlja se na STVARNU poziciju pri ulasku u whip
-        self._recover_entry_pos = None  # STVARNA pozicija u trenutku kraja bacanja
-        self._recover_entry_t = None
+        self._prev_recover_dist = None
         self._landed_at_step = None
         return super().reset(seed=seed, options=options)
 
@@ -189,22 +209,13 @@ class G1FreeThrowEnv(G1FixedBodyThrowEnv):
                 -1, 1,
             )
         else:
-            # RECOVER faza: cist skriptovani prelaz, RL vise NE ucestvuje.
-            # Polazna tacka je STVARNA pozicija ruke na kraju whip faze
-            # (self._whip_high_water - azuriran svaki korak tokom cock->whip,
-            # pa poslednja vrednost = tacno gde je ruka bila kad je WHIP_END
-            # dostignut), ne idealizovana konstanta. Garantovano glatko
-            # (smoothstep) i u ispravnom smeru - nema RL suma, nema mrdanja.
-            if self._recover_entry_pos is None:
-                self._recover_entry_pos = (
-                    self._whip_high_water.copy() if self._whip_high_water is not None
-                    else full[self.active_joints].copy()
-                )
-                self._recover_entry_t = t
-            p = _smoothstep((t - self._recover_entry_t) / RECOVER_DURATION)
-            neutral_active = self._A_neutral[self.active_joints]
-            full[self.active_joints] = (
-                self._recover_entry_pos + (neutral_active - self._recover_entry_pos) * p
+            # RECOVER faza: RL zadrzava kontrolu SAMO nad shoulder_pitch i
+            # elbow (RECOVER_MASK) da uci da se brze vrati u neutralnu pozu -
+            # shoulder_roll ide direktno na skriptovanu (neutralnu) vrednost.
+            full[self.active_joints] = np.clip(
+                full[self.active_joints]
+                + RECOVER_RESIDUAL_SCALE * arm_residual * self._recover_mask,
+                -1, 1,
             )
         if COCK_END <= t < WHIP_END:
             # recet: samo napred (ka throw), nikad nazad (ka cock).
@@ -245,6 +256,21 @@ class G1FreeThrowEnv(G1FixedBodyThrowEnv):
             self._released_here = False
             r += W_RELEASE_VX * min(max(0.0, self._ball_vel()[0]), W_RELEASE_SPEED_CAP)
 
+        # RECOVER faza: nagradi brz povratak shoulder_pitch+elbow ka neutralnoj
+        # pozi (napredak iz koraka u korak), pa kazni brzinu zgloba kad je vec
+        # stigao blizu (da ne drma/oscilira posle sto stigne).
+        if t >= WHIP_END:
+            dev = (self.data.qpos[self._recover_qpos_adr]
+                   - self.nominal_qpos[self._recover_qpos_adr])
+            dist = float(np.linalg.norm(dev))
+            if self._prev_recover_dist is not None:
+                r += W_RECOVER_PROGRESS * max(0.0, self._prev_recover_dist - dist)
+            self._prev_recover_dist = dist
+            if dist < RECOVER_SETTLE_EPS:
+                recover_vel = self.data.qvel[self._recover_qvel_adr]
+                r -= W_RECOVER_JITTER * float(np.linalg.norm(recover_vel))
+        else:
+            self._prev_recover_dist = None
 
         ball_x = float(self._ball_pos()[0])
         ball_y = float(self._ball_pos()[1])

@@ -103,12 +103,6 @@ W_STAND_STILL = 2.0
 # kazna ako krene unazad (fwd < 0) - smanjeno, ne treba da bude prestrogo
 W_BACKWARD = 2.0
 
-# minimizuj VREME dolaska do cilja: mala kazna svaki korak dok jos nije
-# stigao (podstice zurbu), plus jednokratan bonus koji je veci sto brze stigne
-W_TIME_PENALTY = 0.2
-W_ARRIVAL_SPEED = 15.0
-ARRIVAL_SPEED_WINDOW = 1.5  # s - stigne li unutar ovoga, pun bonus, posle linearno opada do 0
-
 FILTER_ALPHA = 0.3  # nisko-propusni filter na akciju, isti trik kao kod bacanja
 
 
@@ -173,7 +167,6 @@ class G1WalkEnv(gym.Env):
         self._prev_capped_fwd = 0.0
         self._left_lift_steps = 0
         self._right_lift_steps = 0
-        self._arrived_step = None
 
     def _gravity_in_base(self):
         R = self.data.xmat[self.torso_id].reshape(3, 3)
@@ -212,7 +205,6 @@ class G1WalkEnv(gym.Env):
         self._prev_capped_fwd = 0.0
         self._left_lift_steps = 0
         self._right_lift_steps = 0
-        self._arrived_step = None
         return self._get_obs(), {}
 
     def step(self, action):
@@ -323,17 +315,6 @@ class G1WalkEnv(gym.Env):
 
         speed = float(np.linalg.norm(vel[:3]))
         in_zone = fwd >= TARGET_DISTANCE and not fell
-
-        # minimizuj VREME dolaska: mala kazna svaki korak dok jos nije stigao,
-        # plus jednokratan bonus koji je veci sto brze stigne (manje vremena
-        # od pocetka epizode)
-        if not in_zone:
-            r -= W_TIME_PENALTY
-        elif self._arrived_step is None:
-            self._arrived_step = self.step_count
-            arrival_t = self._arrived_step * self.control_dt
-            r += W_ARRIVAL_SPEED * max(0.0, 1.0 - arrival_t / ARRIVAL_SPEED_WINDOW)
-
         # kontinualan podsticaj da miruje cim je u ciljnoj zoni (ne samo
         # jednokratan bonus na kraju)
         if in_zone:

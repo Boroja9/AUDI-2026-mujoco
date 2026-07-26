@@ -1,4 +1,13 @@
-"""Residual RL pod starim imenom: baseline pitcher kao osnova, RL uci korekciju."""
+"""Posebna kopija g1_free_throw_env.py SAMO za Task 1 (baci sto dalje, bez mete).
+
+Napravljeno zato sto je g1_free_throw_env.py u medjuvremenu postao iskljucivo
+target-accuracy env (nagrada je uvek "koliko si blizu target_pos", ne "koliko
+si daleko baciо") - taj fajl sada koriste Task 2/3 i ne sme se dirati. Ovo je
+nezavisna kopija sa stvarnom "baci sto dalje" nagradom, da ne pokvarimo ono sto
+vec radi za Task 2/3.
+
+    python scripts/train_ppo_distance.py --timesteps 500000 --n-envs 4
+"""
 
 from __future__ import annotations
 
@@ -10,7 +19,7 @@ from envs.g1_fixed_body_throw_env import G1FixedBodyThrowEnv
 
 ACTIVE_JOINTS = (0, 1, 3)
 RESIDUAL_SCALE = 0.6
-WAIST_RESIDUAL_SCALE = 0.3  # struk je osetljiviji zglob, manji opseg korekcije
+WAIST_RESIDUAL_SCALE = 0.3
 
 RAISE_POSE_RAD = np.array([-2.0, -0.80, 0.0, 0.0, 0.0, 0.0, 0.0])
 COCK_POSE_RAD = np.array([-2.0, -0.80, 0.0, -0.5, 0.0, 0.0, 0.0])
@@ -18,24 +27,27 @@ THROW_POSE_RAD = np.array([-2.0, -0.80, 0.0, 1.5, 0.0, 0.0, 0.0])
 RAISE_END = 0.45
 COCK_END = 1.00
 WHIP_END = 1.20
-RECOVER_DURATION = 0.0875  # s - jos duplo brze (bilo 0.175, pre toga 0.35) - koliko traje GLATKI skriptovani prelaz iz STVARNE
-                          # (ne idealizovane) pozicije ruke u trenutku kraja
-                          # bacanja, ka neutralnoj (0,0,0). RL vise NE ucestvuje
-                          # u ovoj fazi - garantovano bez mrdanja/trzaja/pogresnog
-                          # smera, jer je to cista matematika (smoothstep), ne
-                          # nesto sto mreza "izlaze".
-MIN_RELEASE_TIME = 0.4   # RL ne sme da ispusti loptu pre ovog trenutka
-RELEASE_DEADLINE = 1.20  # prinudni release ako RL nikad ne odluci
+LOWER_END = 1.55  # posle bacanja, ruka se za ovoliko sekundi spusti u neutralnu
+                  # (nominalnu) pozu i ostaje tu - ne vise zamrznuta u pozi bacanja
+MIN_RELEASE_TIME = 0.4
+RELEASE_DEADLINE = 1.20
 BASELINE_SCALE = 3.2
 
-TARGET_POS = (2.8, 0.0, 0.6)   # pomereno 0.5m dalje da kompenzuje hodanje pre bacanja
-SUCCESS_RADIUS = 0.28          # "bullseye" - unutar ovog radijusa = pogodak
-W_MISS_PENALTY = 3.0           # linearna kazna srazmerna udaljenosti - jasan signal "prisi blize" i kad je promasaj veliki
-W_ACCURACY = 20.0              # ublazeno (bilo 25.0, pre toga 15.0) - K_ACC=2.5 je
-                                # previse ostro sruslo success rate sa 90% na 78%,
-                                # cilj je da ostane blizu 90% uz malo vise nagrade za centar
-K_ACC = 1.8                    # ublazeno (bilo 2.5, pre toga 1.5)
-BULLSEYE_BONUS = 25.0          # ublazeno (bilo 30.0, pre toga 20.0)
+# ISTA pozicija kao u deljenom g1_free_throw_env.py (Task 2/3) - target_pos
+# ulazi u observation, pa menjanje njegove vrednosti menja sta mreza "vidi"
+# i kvari ponasanje vec istreniranog modela (probano: pomeranje mete je
+# smanjilo prosecan domet sa 2.33m na 1.58m na istim seed-ovima, iako je
+# fizicko preklapanje sa metom u praksi bio nepostojeci problem).
+TARGET_POS = (2.8, 0.0, 0.6)
+SUCCESS_RADIUS = 0.28
+
+# --- prava "baci sto dalje" nagrada (nema mete, nagradjuje se sam domet) ---
+W_DISTANCE = 8.0        # nagrada srazmerna dometu, do DISTANCE_CAP
+DISTANCE_CAP = 6.0      # m - dalje od ovoga se vise ne nagradjuje (da ne trci u beskraj)
+W_SIDE_THROW = 3.0      # kazna za bocno (Y) skretanje lopte od prave linije
+W_SHORT_THROW = 15.0    # kazna za bacanje unazad ili kratko (< SHORT_THROW_MIN)
+SHORT_THROW_MIN = 0.1   # m
+
 MAX_BALL_X = 12.0
 W_RELEASE_VX = 1.0
 W_RELEASE_SPEED_CAP = 8.0
@@ -48,14 +60,6 @@ W_RESIDUAL = 0
 ALIVE_BONUS = 0.05
 FALL_PENALTY = 20.0
 
-# KLJUCNO: epizoda se inace gasi ISTOG koraka kad lopta sleti/pogodi metu -
-# to je bilo pre WHIP_END kod uspesnih bacanja (target je blizu), pa recovery
-# kod NIKAD nije stigao da se izvrsi. Sad se epizoda drzi ziva jos ovoliko
-# sekundi posle sletanja, da recovery stigne da se desi i nagradi.
-RECOVER_HOLD_SECONDS = 1.0
-
-# nisko-propusni filter na RL korekciju: garantuje glatkoce bez obzira sta
-# mreza nauci (umesto da se to uci kroz reward, sto je bilo nepouzdano).
 FILTER_ALPHA = 0.25
 
 
@@ -64,7 +68,7 @@ def _smoothstep(x):
     return x * x * (3.0 - 2.0 * x)
 
 
-class G1FreeThrowEnv(G1FixedBodyThrowEnv):
+class G1FreeThrowDistanceEnv(G1FixedBodyThrowEnv):
     def __init__(self, **kwargs):
         kwargs.setdefault("learned_release", True)
         kwargs.setdefault("action_scale", BASELINE_SCALE)
@@ -82,18 +86,11 @@ class G1FreeThrowEnv(G1FixedBodyThrowEnv):
         self._A_raise = np.clip((RAISE_POSE_RAD[: self.n_arm] - nom) / self.action_scale, -1, 1)
         self._A_cock = np.clip((COCK_POSE_RAD[: self.n_arm] - nom) / self.action_scale, -1, 1)
         self._A_throw = np.clip((THROW_POSE_RAD[: self.n_arm] - nom) / self.action_scale, -1, 1)
-        # neutralna (nominalna) poza - ruka se posle bacanja spusta ovde i ostaje
         self._A_neutral = np.zeros_like(self._A_throw)
-        # "recet": tokom zamaha (cock->whip) zglobovi ne smeju da se vrate
-        # nazad ka cock pozi - samo napred ka throw, da se izbegne mahanje
-        # rukom na sve strane. Van tog prozora (raise/cock/recover) slobodno.
         self._whip_direction = np.sign(
             self._A_throw[self.active_joints] - self._A_cock[self.active_joints]
         )
 
-        # struk (waist_yaw) kao dodatni kontrolisani zglob: RL time moze da
-        # kompenzuje reakcioni obrtni moment tela izazvan zamahom ruke, koji
-        # inace sistematski skrece bacanje u stranu.
         waist_aid = None
         for aid in range(self.model.nu):
             if mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, aid) == "waist_yaw_joint":
@@ -109,13 +106,9 @@ class G1FreeThrowEnv(G1FixedBodyThrowEnv):
         self.waist_qpos_adr = int(self.model.jnt_qposadr[waist_jid])
         self.waist_qvel_adr = int(self.model.jnt_dofadr[waist_jid])
 
-        # +1 waist, +1 odluka o ispustanju lopte (RL bira trenutak, min MIN_RELEASE_TIME)
         self.action_space = spaces.Box(
             -1, 1, shape=(len(self.active_joints) + 2,), dtype=np.float32
         )
-        # prev_action (koji ulazi u baznu _get_obs) sad mora da uracuna i
-        # dodatni (waist) aktuator - probaj stvarnu duzinu umesto da je
-        # racunamo analiticki, da izbegnemo neslaganje sa observation_space.
         self.prev_action = np.zeros(self.n_arm + len(self.extra_actuator_ids) + 1)
         base_dim = super()._get_obs().shape[0]
         self.observation_space = spaces.Box(
@@ -123,7 +116,6 @@ class G1FreeThrowEnv(G1FixedBodyThrowEnv):
         )
         self._released_here = False
         self._filtered_action = np.zeros(len(self.active_joints) + 1, dtype=np.float32)
-        self._recover_hold_steps = int(round(RECOVER_HOLD_SECONDS / self.control_dt))
 
     def _baseline_action(self, t):
         if t < RAISE_END:
@@ -134,10 +126,9 @@ class G1FreeThrowEnv(G1FixedBodyThrowEnv):
         if t < WHIP_END:
             p = _smoothstep((t - COCK_END) / (WHIP_END - COCK_END))
             return self._A_cock + (self._A_throw - self._A_cock) * p
-        # posle WHIP_END: recovery prelaz se racuna u step() na osnovu STVARNE
-        # pozicije u tom trenutku (ne odavde) - ovo se koristi samo za
-        # zglobove van active_joints (npr. rucni zglobovi), koji ionako
-        # ostaju na neutrali.
+        if t < LOWER_END:
+            p = _smoothstep((t - WHIP_END) / (LOWER_END - WHIP_END))
+            return self._A_throw + (self._A_neutral - self._A_throw) * p
         return self._A_neutral
 
     def _base_obs_extra(self):
@@ -168,10 +159,7 @@ class G1FreeThrowEnv(G1FixedBodyThrowEnv):
     def reset(self, seed=None, options=None):
         self._released_here = False
         self._filtered_action = np.zeros(len(self.active_joints) + 1, dtype=np.float32)
-        self._whip_high_water = None  # postavlja se na STVARNU poziciju pri ulasku u whip
-        self._recover_entry_pos = None  # STVARNA pozicija u trenutku kraja bacanja
-        self._recover_entry_t = None
-        self._landed_at_step = None
+        self._whip_high_water = None
         return super().reset(seed=seed, options=options)
 
     def step(self, rl_action):
@@ -188,28 +176,7 @@ class G1FreeThrowEnv(G1FixedBodyThrowEnv):
                 full[self.active_joints] + RESIDUAL_SCALE * arm_residual,
                 -1, 1,
             )
-        else:
-            # RECOVER faza: cist skriptovani prelaz, RL vise NE ucestvuje.
-            # Polazna tacka je STVARNA pozicija ruke na kraju whip faze
-            # (self._whip_high_water - azuriran svaki korak tokom cock->whip,
-            # pa poslednja vrednost = tacno gde je ruka bila kad je WHIP_END
-            # dostignut), ne idealizovana konstanta. Garantovano glatko
-            # (smoothstep) i u ispravnom smeru - nema RL suma, nema mrdanja.
-            if self._recover_entry_pos is None:
-                self._recover_entry_pos = (
-                    self._whip_high_water.copy() if self._whip_high_water is not None
-                    else full[self.active_joints].copy()
-                )
-                self._recover_entry_t = t
-            p = _smoothstep((t - self._recover_entry_t) / RECOVER_DURATION)
-            neutral_active = self._A_neutral[self.active_joints]
-            full[self.active_joints] = (
-                self._recover_entry_pos + (neutral_active - self._recover_entry_pos) * p
-            )
         if COCK_END <= t < WHIP_END:
-            # recet: samo napred (ka throw), nikad nazad (ka cock).
-            # startuje od STVARNE pozicije ruke pri ulasku u whip, ne od
-            # idealizovane konstante - da izbegnemo trzaj/zaustavljanje.
             if self._whip_high_water is None:
                 self._whip_high_water = full[self.active_joints].copy()
             delta = full[self.active_joints] - self._whip_high_water
@@ -245,38 +212,22 @@ class G1FreeThrowEnv(G1FixedBodyThrowEnv):
             self._released_here = False
             r += W_RELEASE_VX * min(max(0.0, self._ball_vel()[0]), W_RELEASE_SPEED_CAP)
 
-
+        landed = terminated and not self.robot_fell and self._ball_landed()
         ball_x = float(self._ball_pos()[0])
         ball_y = float(self._ball_pos()[1])
-        just_landed_now = (
-            not self.robot_fell
-            and info.get("landing_error") is not None
-            and self._landed_at_step is None
-        )
-        if just_landed_now:
-            err = float(info["landing_error"])
-            # linearna kazna daje jasan signal "prisi blize" cak i kad je promasaj
-            # veliki (eksponencijalni deo sam po sebi skoro nista ne razlikuje
-            # izmedju "jako daleko" i "malo manje daleko").
-            r -= W_MISS_PENALTY * err
-            # dodatni bonus koji brzo raste sto si blizi centru - fina preciznost.
-            r += W_ACCURACY * np.exp(-K_ACC * err)
-            if info.get("success"):
-                r += BULLSEYE_BONUS
-
-        # epizoda se vise NE gasi istog koraka kad lopta sleti/pogodi - drzi se
-        # ziva jos RECOVER_HOLD_SECONDS da recovery (povratak ruke) stigne da
-        # se izvrsi i nagradi. Pad i dalje odmah gasi epizodu (sigurnosno).
-        if info.get("landing_error") is not None and not self.robot_fell:
-            if self._landed_at_step is None:
-                self._landed_at_step = self.step_count
-            terminated = bool(
-                self.step_count - self._landed_at_step >= self._recover_hold_steps
-            )
-        # sigurnosni prekid uvek vazi, bez obzira na hold prozor iznad
-        if abs(ball_x) > MAX_BALL_X or abs(ball_y) > MAX_BALL_X:
-            terminated = True
-
+        if landed:
+            # prava "sto dalje" nagrada: srazmerna dometu (capped), kazna za
+            # bocno skretanje od prave linije, kazna za kratko/nazad bacanje.
+            r += W_DISTANCE * min(max(0.0, ball_x), DISTANCE_CAP)
+            r -= W_SIDE_THROW * abs(ball_y)
+            if ball_x < SHORT_THROW_MIN:
+                r -= W_SHORT_THROW
+            if abs(ball_x) > MAX_BALL_X or abs(ball_y) > MAX_BALL_X:
+                terminated = True
         info["ball_x"] = ball_x
         info["tilt"] = self._tilt()
         return obs, float(r), terminated, truncated, info
+
+    def _ball_landed(self):
+        ball_pos = self._ball_pos()
+        return bool(self.released and ball_pos[2] <= self.ball_radius + 0.015)

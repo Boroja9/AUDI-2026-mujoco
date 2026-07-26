@@ -1,8 +1,14 @@
-"""RL uci G1 da napravi dva koraka napred, bez padanja.
+"""Posebna kopija g1_walk_env.py SAMO za varijantu sa zakljucanim hip_yaw.
 
-Odvojeno od bacanja - cist walking zadatak. RL sam otkriva balans/hod
-(pokusaji sa rucno skriptovanim hodom su padali - jednonozni oslonac
-zahteva feedback koji je tesko rucno podesiti)."""
+Napravljeno posle greske: zamrzavanje hip_yaw je prvo uradjeno direktno u
+deljenom envs/g1_walk_env.py, sto je pokvarilo Task 3 (play_walk_then_throw.py
+koristi stari frozen_test.zip checkpoint treniran sa 12 akcija, ne 10) - taj
+fajl je vracen na originalnih 12 akcija i vise se ne dira. Ovo je nezavisna
+kopija za treninge/checkpoint-e koji koriste 10-akcijsku (hip_yaw zakljucan)
+varijantu, npr. policies/g1_walk_ppo_v2_frozenyaw.
+
+    python scripts/train_ppo_walk_frozenyaw.py --timesteps 7000000 --n-envs 8
+"""
 
 from __future__ import annotations
 
@@ -33,6 +39,10 @@ FALL_HEIGHT_RATIO = 0.55
 # gusilo svaki pokusaj koraka pa se politika zaglavila na "ne mrdaj")
 HIP_LATERAL_IDX = [1, 2, 7, 8]  # L_hip_roll, L_hip_yaw, R_hip_roll, R_hip_yaw
 W_HIP_LATERAL = 0.5
+
+# hip_yaw (levo i desno) se ne menja u treningu - RL ga ne kontrolise, ostaje
+# zakljucan na nominalnoj poziciji celu epizodu (nije bitan za hod pravo napred)
+FROZEN_LEG_IDX = [2, 8]  # L_hip_yaw, R_hip_yaw u LEG_JOINTS
 
 # levi/desni parovi (isti zglob, suprotna noga) - kazna za asimetriju uklonjena
 LEFT_IDX = [0, 1, 2, 3, 4, 5]
@@ -103,16 +113,10 @@ W_STAND_STILL = 2.0
 # kazna ako krene unazad (fwd < 0) - smanjeno, ne treba da bude prestrogo
 W_BACKWARD = 2.0
 
-# minimizuj VREME dolaska do cilja: mala kazna svaki korak dok jos nije
-# stigao (podstice zurbu), plus jednokratan bonus koji je veci sto brze stigne
-W_TIME_PENALTY = 0.2
-W_ARRIVAL_SPEED = 15.0
-ARRIVAL_SPEED_WINDOW = 1.5  # s - stigne li unutar ovoga, pun bonus, posle linearno opada do 0
-
 FILTER_ALPHA = 0.3  # nisko-propusni filter na akciju, isti trik kao kod bacanja
 
 
-class G1WalkEnv(gym.Env):
+class G1WalkFrozenYawEnv(gym.Env):
     metadata = {"render_modes": []}
 
     def __init__(self, scene=SCENE):
@@ -149,6 +153,10 @@ class G1WalkEnv(gym.Env):
                 if mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, i)}
         self.leg_actuator_ids = np.array([amap[n] for n in LEG_JOINTS])
         self.n_leg = len(LEG_JOINTS)
+        self.active_leg_idx = np.array(
+            [i for i in range(self.n_leg) if i not in FROZEN_LEG_IDX]
+        )
+        self.n_active = len(self.active_leg_idx)
 
         if self.model.nkey > 0:
             mujoco.mj_resetDataKeyframe(self.model, self.data, 0)
@@ -160,7 +168,7 @@ class G1WalkEnv(gym.Env):
         self.nominal_base_height = float(self.data.xpos[self.pelvis_id, 2])
         self.fall_height = FALL_HEIGHT_RATIO * self.nominal_base_height
 
-        self.action_space = spaces.Box(-1, 1, shape=(self.n_leg,), dtype=np.float32)
+        self.action_space = spaces.Box(-1, 1, shape=(self.n_active,), dtype=np.float32)
         obs_dim = 1 + 2 + 3 + 3 + self.n_leg + self.n_leg + self.n_leg + 1
         self.observation_space = spaces.Box(-np.inf, np.inf, shape=(obs_dim,), dtype=np.float32)
 
@@ -173,7 +181,6 @@ class G1WalkEnv(gym.Env):
         self._prev_capped_fwd = 0.0
         self._left_lift_steps = 0
         self._right_lift_steps = 0
-        self._arrived_step = None
 
     def _gravity_in_base(self):
         R = self.data.xmat[self.torso_id].reshape(3, 3)
@@ -201,7 +208,9 @@ class G1WalkEnv(gym.Env):
             mujoco.mj_resetData(self.model, self.data)
             self.data.qpos[:] = self.nominal_qpos
         self.data.ctrl[:] = self.nominal_ctrl
-        self.data.qpos[self.leg_qpos_adr] += self.np_random.uniform(-0.02, 0.02, self.n_leg)
+        self.data.qpos[self.leg_qpos_adr[self.active_leg_idx]] += self.np_random.uniform(
+            -0.02, 0.02, self.n_active
+        )
         mujoco.mj_forward(self.model, self.data)
         self.origin_x = float(self.data.xpos[self.pelvis_id, 0])
         self.step_count = 0
@@ -212,11 +221,15 @@ class G1WalkEnv(gym.Env):
         self._prev_capped_fwd = 0.0
         self._left_lift_steps = 0
         self._right_lift_steps = 0
-        self._arrived_step = None
         return self._get_obs(), {}
 
     def step(self, action):
         action = np.clip(np.asarray(action, dtype=np.float32).ravel(), -1, 1)
+        # hip_yaw (FROZEN_LEG_IDX) nije deo action_space-a - prosiri na puni
+        # 12-dim vektor sa nulama tu, da ostane zakljucan na nominalnoj ctrl.
+        full_action = np.zeros(self.n_leg, dtype=np.float32)
+        full_action[self.active_leg_idx] = action
+        action = full_action
         self._filtered_action += FILTER_ALPHA * (action - self._filtered_action)
         targets = self.nominal_ctrl[self.leg_actuator_ids] + ACTION_SCALE * self._filtered_action
         self.data.ctrl[:] = self.nominal_ctrl
@@ -323,17 +336,6 @@ class G1WalkEnv(gym.Env):
 
         speed = float(np.linalg.norm(vel[:3]))
         in_zone = fwd >= TARGET_DISTANCE and not fell
-
-        # minimizuj VREME dolaska: mala kazna svaki korak dok jos nije stigao,
-        # plus jednokratan bonus koji je veci sto brze stigne (manje vremena
-        # od pocetka epizode)
-        if not in_zone:
-            r -= W_TIME_PENALTY
-        elif self._arrived_step is None:
-            self._arrived_step = self.step_count
-            arrival_t = self._arrived_step * self.control_dt
-            r += W_ARRIVAL_SPEED * max(0.0, 1.0 - arrival_t / ARRIVAL_SPEED_WINDOW)
-
         # kontinualan podsticaj da miruje cim je u ciljnoj zoni (ne samo
         # jednokratan bonus na kraju)
         if in_zone:

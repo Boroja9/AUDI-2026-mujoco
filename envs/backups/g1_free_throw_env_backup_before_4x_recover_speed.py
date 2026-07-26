@@ -18,7 +18,7 @@ THROW_POSE_RAD = np.array([-2.0, -0.80, 0.0, 1.5, 0.0, 0.0, 0.0])
 RAISE_END = 0.45
 COCK_END = 1.00
 WHIP_END = 1.20
-RECOVER_DURATION = 0.0875  # s - jos duplo brze (bilo 0.175, pre toga 0.35) - koliko traje GLATKI skriptovani prelaz iz STVARNE
+RECOVER_DURATION = 0.175  # s - duplo brze (bilo 0.35) - koliko traje GLATKI skriptovani prelaz iz STVARNE
                           # (ne idealizovane) pozicije ruke u trenutku kraja
                           # bacanja, ka neutralnoj (0,0,0). RL vise NE ucestvuje
                           # u ovoj fazi - garantovano bez mrdanja/trzaja/pogresnog
