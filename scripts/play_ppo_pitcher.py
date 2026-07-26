@@ -19,11 +19,12 @@ def main():
     ap.add_argument("--model", type=Path,
                     default=ROOT / "policies" / "g1_free_throw_ppo" / "best_model.zip")
     ap.add_argument("--speed", type=float, default=1.0)
+    ap.add_argument("--seed", type=int, default=29)
     args = ap.parse_args()
 
     env = G1FreeThrowEnv()
     model = PPO.load(str(args.model))
-    obs, _ = env.reset(seed=0)
+    obs, _ = env.reset(seed=args.seed)
     with mujoco.viewer.launch_passive(env.model, env.data) as viewer:
         while viewer.is_running():
             action, _ = model.predict(obs, deterministic=True)
@@ -34,7 +35,7 @@ def main():
                 print(f"ep kraj: ball_x={info['ball_x']:.2f} m  "
                       f"pao={info['robot_fell']}  release={info['release_time']}")
                 time.sleep(0.8)
-                obs, _ = env.reset(seed=0)
+                obs, _ = env.reset(seed=args.seed)
 
 
 if __name__ == "__main__":

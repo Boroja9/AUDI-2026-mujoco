@@ -36,6 +36,10 @@ def main():
         "--init", type=Path, default=None,
         help="Postojeci .zip model od kog se nastavlja trening (warm-start) umesto od nule."
     )
+    parser.add_argument(
+        "--ent-coef", type=float, default=0.01,
+        help="Koeficijent entropije (radoznalost). Vazi i za warm-start (prepisuje ucitanu vrednost)."
+    )
     args = parser.parse_args()
 
     args.output.mkdir(parents=True, exist_ok=True)
@@ -51,7 +55,8 @@ def main():
     )
     if args.init:
         model = PPO.load(str(args.init), env=train_env, tensorboard_log=str(args.output / "tensorboard"))
-        print(f"warm-started from {args.init}")
+        model.ent_coef = args.ent_coef
+        print(f"warm-started from {args.init}, ent_coef={args.ent_coef}")
     else:
         model = PPO(
             "MlpPolicy",
@@ -62,7 +67,7 @@ def main():
             n_epochs=10,
             gamma=0.99,
             gae_lambda=0.95,
-            ent_coef=0.01,
+            ent_coef=args.ent_coef,
             verbose=1,
             seed=args.seed,
             tensorboard_log=str(args.output / "tensorboard"),

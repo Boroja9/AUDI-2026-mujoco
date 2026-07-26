@@ -62,11 +62,7 @@ FALL_PENALTY = 30.0   # povecano - jaca kazna za pad robota
 # nagradu pretreanim/neprirodnim mahsiranjem (marširanje previsoko).
 FOOT_REST_Z = 0.033
 MAX_FOOT_LIFT = 0.16  # povecano (bilo 0.10) - noga sme/treba da ide vise, prirodniji korak
-W_FOOT_LIFT = 32.0    # povecano (bilo 18.0) - podizanje stopala vaznije od savijanja kolena,
-                      # max doprinos (32*0.16=5.12) sada preteze nad kolenom (ispod)
-                      # (vuci noge) je vec davala solidnu nagradu pa se mrezi
-                      # nije isplatilo da rizikuje promenu; ovo mora da bude
-                      # dovoljno veliko da podizanje postane ocigledno bolje
+W_FOOT_LIFT = 6.0     # blago povecano da prati vecu dozvoljenu visinu
 # nagrada za podignutu nogu vazi samo dok je podignuta unutar prirodnog
 # trajanja zamaha (swing faze) - ne beskonacno, da ne "visi" u vazduhu
 # radi farmljenja nagrade nego da stvarno koracka.
@@ -77,9 +73,7 @@ MAX_LIFT_DURATION = 0.4  # sekunde
 # iz kuka.
 KNEE_IDX = [3, 9]  # L_knee, R_knee u LEG_JOINTS
 MAX_KNEE_BEND = 0.6  # rad
-W_KNEE_BEND = 6.0  # smanjeno (bilo 15.0) - koleno je sekundarno, samo pomaze da
-                   # hod izgleda prirodnije; podizanje stopala (W_FOOT_LIFT) je
-                   # glavni prioritet, max doprinos kolena (6*0.6=3.6) < stopala (5.12)
+W_KNEE_BEND = 4.0
 
 # kazna ako OBE noge napuste pod istovremeno (skok) - hod treba da zadrzi
 # bar jedno stopalo u kontaktu sa podom u svakom trenutku
@@ -259,9 +253,9 @@ class G1WalkEnv(gym.Env):
         # i podizanje stopala - ne nagradjuje predugo drzanje savijenog kolena)
         knee_qpos = self.data.qpos[self.leg_qpos_adr[KNEE_IDX]] - self.nominal_qpos[self.leg_qpos_adr[KNEE_IDX]]
         knee_bend = np.clip(knee_qpos, 0.0, MAX_KNEE_BEND)
-        if left_lift > LIFT_EPS and self._left_lift_steps <= max_lift_steps:
+        if self._left_lift_steps <= max_lift_steps:
             r += W_KNEE_BEND * knee_bend[0]
-        if right_lift > LIFT_EPS and self._right_lift_steps <= max_lift_steps:
+        if self._right_lift_steps <= max_lift_steps:
             r += W_KNEE_BEND * knee_bend[1]
 
         left_dev = self.data.qpos[self.leg_qpos_adr[LEFT_IDX]] - self.nominal_qpos[self.leg_qpos_adr[LEFT_IDX]]
