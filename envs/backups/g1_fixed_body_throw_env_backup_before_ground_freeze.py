@@ -46,7 +46,7 @@ class G1FixedBodyThrowEnv(gym.Env):
         self.base_body_id=mujoco.mj_name2id(self.model,mujoco.mjtObj.mjOBJ_BODY,'pelvis')
         self.nominal_base_height=float(self.data.xpos[self.base_body_id,2]) if self.base_body_id >= 0 else 0.0
         self.fall_height=0.55*self.nominal_base_height
-        self.ball_radius=float(self.model.geom_size[self.ball_geom_id,0]); self.step_count=0; self.released=False; self.release_time=None; self.best_dist=np.inf; self.landing_error=None; self.success=False; self.robot_fell=False; self.stuck=False; self.ground_frozen=False
+        self.ball_radius=float(self.model.geom_size[self.ball_geom_id,0]); self.step_count=0; self.released=False; self.release_time=None; self.best_dist=np.inf; self.landing_error=None; self.success=False; self.robot_fell=False; self.stuck=False
     def _find_right_arm_joint_names(self):
         all_names=[mujoco.mj_id2name(self.model,mujoco.mjtObj.mjOBJ_JOINT,i) for i in range(self.model.njnt)]; all_names=[n for n in all_names if n]
         preferred=['right_shoulder_pitch_joint','right_shoulder_roll_joint','right_shoulder_yaw_joint','right_elbow_joint','right_wrist_roll_joint','right_wrist_pitch_joint','right_wrist_yaw_joint']
@@ -118,7 +118,7 @@ class G1FixedBodyThrowEnv(gym.Env):
         if self.stick_eq_id>=0: self.data.eq_active[self.stick_eq_id]=0
         self.model.geom_contype[self.ball_geom_id]=1; self.model.geom_conaffinity[self.ball_geom_id]=1
         mujoco.mj_forward(self.model,self.data); self._place_ball_in_hand(); self.model.body_pos[self.target_body_id]=self.target_pos; mujoco.mj_forward(self.model,self.data)
-        self.step_count=0; self.released=False; self.release_time=None; self.best_dist=np.inf; self.landing_error=None; self.success=False; self.robot_fell=False; self.stuck=False; self.ground_frozen=False; self.prev_action=np.zeros(self.n_arm+len(self.extra_actuator_ids)+1)
+        self.step_count=0; self.released=False; self.release_time=None; self.best_dist=np.inf; self.landing_error=None; self.success=False; self.robot_fell=False; self.stuck=False; self.prev_action=np.zeros(self.n_arm+len(self.extra_actuator_ids)+1)
         return self._get_obs(), {}
     def step(self, action):
         action=np.clip(np.asarray(action,dtype=np.float64),-1,1); self.data.ctrl[:]=self.nominal_ctrl
@@ -138,14 +138,10 @@ class G1FixedBodyThrowEnv(gym.Env):
             mujoco.mj_step(self.model,self.data)
             self._lock_hand()
         self.step_count+=1; ball_pos=self._ball_pos()
-        # Rastojanje do mete: X (dubina) racuna se punom tezinom, Y/Z (bocno/
-        # visina) racunaju se sa manjom tezinom (YZ_ERROR_WEIGHT) - ne punom
-        # (kao original 3D, previse strogo za bocni zanos) ali ni nulom (kao
-        # cist X-only, dozvoljavalo je "pogodak" bilo gde po visini/strani
-        # okvira mete) - "centar" sada stvarno znaci blizu vizuelnog centra.
-        YZ_ERROR_WEIGHT=0.4
-        delta=ball_pos-self.target_pos
-        dist_3d=float(np.sqrt(delta[0]**2 + YZ_ERROR_WEIGHT*(delta[1]**2+delta[2]**2))); self.best_dist=min(self.best_dist,dist_3d)
+        # Poeni/pogodak se racunaju SAMO po X (dubina - koliko daleko je lopta
+        # doletela u odnosu na metu), ne po Y (bocno) - Y namerno ne ulazi u
+        # ovo rastojanje, robot za njega ne dobija niti gubi poene direktno.
+        dist_3d=float(abs(ball_pos[0]-self.target_pos[0])); self.best_dist=min(self.best_dist,dist_3d)
         hit_target=False
         if self.released and not self.stuck and self.target_geom_id>=0:
             for i in range(self.data.ncon):
@@ -163,16 +159,6 @@ class G1FixedBodyThrowEnv(gym.Env):
             self.model.geom_contype[self.ball_geom_id]=0; self.model.geom_conaffinity[self.ball_geom_id]=0
             self.stuck=True
         landed_on_ground=bool(self.released and ball_pos[2] <= self.ball_radius+0.015)
-        # ZAMRZNI loptu cim prvi put dodirne zemlju (ako se vec nije zalepila
-        # za metu) - inace se lopta kotrlja/odskace tokom preostalog dela
-        # epizode (npr. dok cekamo da se ruka smiri) i zavrsi vizuelno daleko
-        # od mesta gde je landing_error/success stvarno izmeren. Kolizija sa
-        # podom OSTAJE aktivna (inace propada kroz pod) - samo joj se brzina
-        # ponistava SVAKI korak dok je "na zemlji", da stvarno miruje tu.
-        if landed_on_ground and not self.stuck:
-            self.ground_frozen=True
-        if self.ground_frozen and not self.stuck:
-            self.data.qvel[self.ball_qvel_adr:self.ball_qvel_adr+6]=0
         landed=bool(hit_target or landed_on_ground)
         if landed and self.landing_error is None:
             self.landing_error=dist_3d; self.success=bool(dist_3d <= self.success_radius)

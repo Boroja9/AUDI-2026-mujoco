@@ -23,7 +23,7 @@ def main():
     args = ap.parse_args()
 
     env = G1FreeThrowDistanceEnv()
-    model = PPO.load(str(args.model))
+    model = PPO.load(str(args.model), device="cpu")
     obs, _ = env.reset(seed=args.seed)
     with mujoco.viewer.launch_passive(env.model, env.data) as viewer:
         while viewer.is_running():

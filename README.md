@@ -170,6 +170,13 @@ python scripts/train_ppo_dartboard_postwalk.py --timesteps 300000 --n-envs 4 \
 | Fall count | walk: 0/30 (0%) · throw: 0/30 (0%) |
 | Training wall time (fine-tuning only; walk side reused) | 2321s (~38.7 min), 303,104 steps — slower per-step than tasks 1–2 because every reset also runs a full walk rollout first |
 
+*Iteration note: success rate readings for this exact model — 20% (N=30, very first evaluation) →
+67% (N=15, smaller re-check after a repo cleanup pass) → **50%** (N=30, latest and most
+statistically reliable read, same seed range as the first). The model itself was not
+retrained between these checks — the 67% figure came from a smaller sample and should not
+be read as an improvement; 50%/0.337m is the number to cite. Training wall time and
+step count are properties of the one fine-tuning run behind all three checks.*
+
 ### Key reward components
 
 Identical reward function to Task 2 (the fine-tuning only changes *what state `reset()` starts from*, not the reward itself):

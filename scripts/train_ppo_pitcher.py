@@ -20,10 +20,6 @@ sys.path.insert(0, str(ROOT))
 from envs.g1_free_throw_env import G1FreeThrowEnv
 
 
-def make_env():
-    return G1FreeThrowEnv()
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--timesteps", type=int, default=500_000)
@@ -36,7 +32,24 @@ def main():
         "--init", type=Path, default=None,
         help="Postojeci .zip model od kog se nastavlja trening (warm-start) umesto od nule."
     )
+    parser.add_argument(
+        "--scene", type=Path, default=None,
+        help="Alternativna MJCF scena (npr. scene_throw_2m.xml za metu na 2m)."
+    )
+    parser.add_argument(
+        "--target-x", type=float, default=None,
+        help="Override X pozicije mete (npr. 2.0). Meta uvek ostaje na y=0, z=0.6."
+    )
     args = parser.parse_args()
+
+    env_kwargs = {}
+    if args.scene is not None:
+        env_kwargs["xml_path"] = args.scene
+    if args.target_x is not None:
+        env_kwargs["target_pos"] = (args.target_x, 0.0, 0.6)
+
+    def make_env():
+        return G1FreeThrowEnv(**env_kwargs)
 
     args.output.mkdir(parents=True, exist_ok=True)
     train_env = make_vec_env(make_env, n_envs=args.n_envs, seed=args.seed)

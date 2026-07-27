@@ -20,10 +20,22 @@ def main():
                     default=ROOT / "policies" / "g1_free_throw_ppo_distance_only" / "best_model.zip")
     ap.add_argument("--speed", type=float, default=1.0)
     ap.add_argument("--seed", type=int, default=29)
+    ap.add_argument("--scene", type=Path, default=None,
+                    help="Alternativna MJCF scena (npr. scene_throw_2m.xml za metu na 2m).")
+    ap.add_argument("--target-x", type=float, default=None,
+                    help="Override X pozicije mete (npr. 2.0). Meta uvek ostaje na y=0, z=0.6.")
     args = ap.parse_args()
 
-    env = G1FreeThrowEnv()
-    model = PPO.load(str(args.model))
+    env_kwargs = {}
+    if args.scene is not None:
+        env_kwargs["xml_path"] = args.scene
+    if args.target_x is not None:
+        env_kwargs["target_pos"] = (args.target_x, 0.0, 0.6)
+    env = G1FreeThrowEnv(**env_kwargs)
+    # device="cpu" - CPU je deterministicno, GPU (CUDA) unosi sitan
+    # nedeterminizam koji se kroz epizodu nagomila u primetno drugaciji ishod
+    # i pored istog seed-a (potvrdjeno: promasaj koji se ne ponavlja headless).
+    model = PPO.load(str(args.model), device="cpu")
     obs, _ = env.reset(seed=args.seed)
     with mujoco.viewer.launch_passive(env.model, env.data) as viewer:
         while viewer.is_running():

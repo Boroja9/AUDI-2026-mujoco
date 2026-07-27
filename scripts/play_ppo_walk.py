@@ -22,7 +22,7 @@ def main():
     args = ap.parse_args()
 
     env = G1WalkEnv()
-    model = PPO.load(str(args.model))
+    model = PPO.load(str(args.model), device="cpu")
     obs, _ = env.reset(seed=0)
     with mujoco.viewer.launch_passive(env.model, env.data) as viewer:
         while viewer.is_running():

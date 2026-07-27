@@ -138,14 +138,10 @@ class G1FixedBodyThrowEnv(gym.Env):
             mujoco.mj_step(self.model,self.data)
             self._lock_hand()
         self.step_count+=1; ball_pos=self._ball_pos()
-        # Rastojanje do mete: X (dubina) racuna se punom tezinom, Y/Z (bocno/
-        # visina) racunaju se sa manjom tezinom (YZ_ERROR_WEIGHT) - ne punom
-        # (kao original 3D, previse strogo za bocni zanos) ali ni nulom (kao
-        # cist X-only, dozvoljavalo je "pogodak" bilo gde po visini/strani
-        # okvira mete) - "centar" sada stvarno znaci blizu vizuelnog centra.
-        YZ_ERROR_WEIGHT=0.4
-        delta=ball_pos-self.target_pos
-        dist_3d=float(np.sqrt(delta[0]**2 + YZ_ERROR_WEIGHT*(delta[1]**2+delta[2]**2))); self.best_dist=min(self.best_dist,dist_3d)
+        # Poeni/pogodak se racunaju SAMO po X (dubina - koliko daleko je lopta
+        # doletela u odnosu na metu), ne po Y (bocno) - Y namerno ne ulazi u
+        # ovo rastojanje, robot za njega ne dobija niti gubi poene direktno.
+        dist_3d=float(abs(ball_pos[0]-self.target_pos[0])); self.best_dist=min(self.best_dist,dist_3d)
         hit_target=False
         if self.released and not self.stuck and self.target_geom_id>=0:
             for i in range(self.data.ncon):
